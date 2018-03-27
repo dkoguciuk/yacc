@@ -190,6 +190,8 @@ def calc_features(train, multiplications, augmentation, out_dir, inception, sess
                               for idx in range(batch_images.shape[0])]
 
             # augmentation
+            if augmentation == 3:
+                images_augmented = augment_data_advanced(images_resized)
             if augmentation == 2:
                 temp = augment_data_advanced(images_resized)
                 images_augmented = augment_data_basic(temp)
@@ -224,12 +226,12 @@ def main(argv):
 
     # Parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("-a", "--augmentation_level", help="augment dataset: option 0, 1 or 2", type=int, required=True)
+    parser.add_argument("-a", "--augmentation_level", help="augment dataset: option 0, 1 or 2, 3", type=int, required=True)
     parser.add_argument("-m", "--multiplications", help="how many times should I augment training dataset?", type=int, required=True)
     args = vars(parser.parse_args())
 
     # assert aug level
-    if args['augmentation_level'] != 0 and args['augmentation_level'] != 1 and args['augmentation_level'] != 2:
+    if args['augmentation_level'] != 0 and args['augmentation_level'] != 1 and args['augmentation_level'] != 2 and args['augmentation_level'] != 3:
         print "augmentation level can be one of: 0, 1, 2"
         exit()
 

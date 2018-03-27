@@ -27,16 +27,19 @@
 @note: Created on 23.03.2018
 '''
 
+import os
 import sys
 import cv2
 import time
 import argparse
 import numpy as np
+import tensorflow as tf
 import matplotlib.pyplot as plt
 from sklearn import decomposition
 from sklearn.svm import LinearSVC
 from sklearn.manifold import TSNE
 from utils import data_generator as gen
+from utils.models import MLPClassifier
 
 def _HOG(images):
     """
@@ -164,7 +167,7 @@ def hparam_search(features_train, labels_train, features_test, labels_test):
         features_hparam_test = pca_hparam.transform(features_test)
         print "TEST  SCORE = ", classifier_svm.score(features_hparam_test, labels_test)
 
-def classify(features_train, labels_train, features_test, labels_test, C, verbose):
+def classify_svm(features_train, labels_train, features_test, labels_test, C, verbose):
     """
     Train SVM classifier and eval train and test scores.
 
@@ -185,31 +188,99 @@ def classify(features_train, labels_train, features_test, labels_test, C, verbos
     print "TRAIN SCORE = ", classifier_svm.score(features_train, labels_train)
     print "TEST  SCORE = ", classifier_svm.score(features_test, labels_test)
 
+def classify_mlp(features_train, labels_train, features_test, labels_test):
+
+    EPOCHS = 1
+    BATCH_SIZE = 200
+    CLASSES_COUNT = 10
+    LEARNING_RATE = 0.0005
+   
+    # Reset
+    tf.reset_default_graph()
+    
+    # Define model
+    with tf.device("/device:GPU:0"):
+        model_classifier = MLPClassifier([features_train.shape[-1], 1024, 512, 256, 128, 10], BATCH_SIZE, LEARNING_RATE)
+
+    config = tf.ConfigProto(allow_soft_placement=True)  # , log_device_placement=True)
+    with tf.Session(config=config) as sess:
+        
+        # Run the initialization
+        sess.run(tf.global_variables_initializer())
+
+        # Logs
+        log_model_dir = os.path.join("logs", model_classifier.get_model_name())
+        writer = tf.summary.FileWriter(os.path.join(log_model_dir, time.strftime('%Y-%m-%d_%H:%M:%S', time.localtime())))
+#         writer.add_graph(sess.graph)
+
+        # Do the training loop
+        global_batch_idx = 1
+        for epoch in range(EPOCHS):
+
+            indices = np.arange(features_train.shape[0])
+            features_shuffled = features_train.copy()[indices]
+            labels_shuffled = labels_train.copy()[indices]
+            for index in range(len(features_train)/BATCH_SIZE):
+                features = features_shuffled[index*BATCH_SIZE:(index+1)*BATCH_SIZE]
+                labels = labels_shuffled[index*BATCH_SIZE:(index+1)*BATCH_SIZE]
+                
+                # zero mean
+                features = np.clip((features - 0.38) / 10, -1.0, 1.0)
+                
+                # run optimizer
+                labels_one_hot = sess.run(tf.one_hot(labels, CLASSES_COUNT))
+                _, loss, pred, summary = sess.run([model_classifier.optimizer, model_classifier.loss,
+                                                   model_classifier.get_classification_prediction(), model_classifier.summary],
+                                                   feed_dict={model_classifier.placeholder_embed: features,
+                                                              model_classifier.placeholder_label: labels_one_hot})
+                
+                # train acc
+                acc = float(sum(np.argmax(pred, axis=-1) == labels)) / labels.shape[0]
+                
+                # summ
+                writer.add_summary(summary, global_batch_idx)
+                global_batch_idx += 1
+
+                # Info
+                print "Epoch: %06d batch: %03d loss: %06f train acc: %03f" % (epoch + 1, index, loss, acc)
+                index += 1
+        
+        accs = []
+        features_test = np.clip((features_test - 0.38) / 10, -1.0, 1.0)
+        for index in range(len(features_test)/BATCH_SIZE):
+            features = features_test[index*BATCH_SIZE:(index+1)*BATCH_SIZE]
+            labels = labels_test[index*BATCH_SIZE:(index+1)*BATCH_SIZE]
+            pred = sess.run(model_classifier.get_classification_prediction(),
+                            feed_dict={model_classifier.placeholder_embed: features})
+            acc = float(sum(np.argmax(pred, axis=-1) == labels)) / labels.shape[0]
+            accs.append(acc)
+        print "TEST ACC = ", np.mean(accs)
+
 def main(argv):
 
     # Parser
     parser = argparse.ArgumentParser()
     parser.add_argument("-f", "--features", help="supported image features: hog, cnn", type=str)
+    parser.add_argument("-c", "--classifier", help="supported image features: svm, mlp", type=str)
     parser.add_argument("-a", "--augmentation_level", help="if cnn features were chosen, which dataset should I use?  (0, 1 or 2)", type=int)
     parser.add_argument('-i', '--images_vis', help='visualize class images', action='store_true')
     parser.add_argument('-s', '--hparam_search', help='search for best C param for SVM classifier', action='store_true')
-    parser.add_argument('-t', '--train', help='train SVM classifier', action='store_true')
     parser.add_argument('-d', '--decompose', help='decompose features with PCA and t-SNE', action='store_true')
     parser.add_argument('-v', '--verbose', help='should I print some additional info?', action='store_true')
-    parser.add_argument("-c", "--c_param", help="C param of the SVM classifier", type=float, default=1.0)
+    parser.add_argument("-p", "--c_param", help="C param of the SVM classifier", type=float, default=1.0)
     args = vars(parser.parse_args())  
 
     ######################################################################################
     ################################ IMAGES VISUALIZATION ################################
     ######################################################################################
-
+ 
     if args['images_vis']:
         images_visualization()
-
+ 
     ######################################################################################
     ################################## Extract features ##################################
     ######################################################################################
-
+ 
     if args['features'] == 'hog':
         generator = gen.CifarImages('GRAY')
         features_train, labels_train = extract_HOG(generator, train=True, verbose=args['verbose'])
@@ -234,28 +305,29 @@ def main(argv):
     else:
         raise ValueError("Features not supported..")
         exit()
-
+ 
     ######################################################################################
     ################################## PCA DECOMPOSITION #################################
     ######################################################################################
-
+ 
     if args['decompose']:
         decompose(features_train, labels_train)
-
+ 
     ######################################################################################
     #################################### HPARAM SEARCH ###################################
     ######################################################################################
-
+ 
     if args['hparam_search']:
         hparam_search(features_train, labels_train, features_test, labels_test)
-
+ 
     ######################################################################################
     ################################ FINAL CLASSIFICATION ################################
     ######################################################################################
-
-    if args['train']:
-        classify(features_train, labels_train, features_test, labels_test, args['c_param'], args['verbose'])
-
+ 
+    if args['classifier'] == 'svm':
+        classify_svm(features_train, labels_train, features_test, labels_test, args['c_param'], args['verbose'])
+    elif args['classifier'] == 'mlp':
+        classify_mlp(features_train, labels_train, features_test, labels_test)
 
 if __name__ == "__main__":
     main(sys.argv[1:])

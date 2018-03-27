@@ -181,8 +181,8 @@ class CifarCNNFeatures(object):
         if permute:
             indices = np.arange(len(filepaths))
             np.random.shuffle(indices)
-            filepaths = filepaths[indices]
-            labels = labels[indices]
+            filepaths = (np.array(filepaths)[indices]).tolist()
+            labels = (np.array(labels)[indices]).tolist()
 
         # filepaths
         batch_features = []
@@ -200,15 +200,6 @@ class CifarCNNFeatures(object):
                 yield ret
                 batch_features = []
                 batch_labels = []
-    
-        if len(batch_features) != 0:
-            while len(batch_features) != 0:
-                batch_features.append(np.zeros(batch_features[0].shape))
-                batch_labels.append("")
-            ret = (np.stack(batch_features, axis=0), np.stack(batch_labels, axis=0))
-            yield ret
-            batch_features = []
-            batch_labels = []
 
     def size(self, aug_level, train):
 
